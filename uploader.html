@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Upload Images & Videos — Firebase (Realtime)</title>
+  <style>
+    :root{
+      --bg:#f6f8fb; --card:#ffffff; --muted:#6b7280; --accent:#2563eb;
+      --success:#10b981;
+    }
+    body{
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      margin:0; padding:20px; background:var(--bg); color:#0f172a;
+    }
+    .container{max-width:980px;margin:0 auto}
+    header{display:flex;gap:16px;align-items:center;margin-bottom:18px}
+    h1{font-size:20px;margin:0}
+    p.lead{margin:0;color:var(--muted);font-size:13px}
+    .card{background:var(--card);border-radius:12px;padding:16px;box-shadow:0 6px 18px rgba(12, 17, 29, 0.06);margin-bottom:16px}
+    .u-row{display:flex;gap:12px;flex-wrap:wrap}
+    .controls{display:flex;gap:10px;align-items:center}
+    button{background:var(--accent);color:#fff;border:0;padding:10px 12px;border-radius:8px;cursor:pointer}
+    .btn-ghost{background:transparent;border:1px solid #e6eefb;color:var(--accent)}
+    input[type="file"]{display:none}
+    .drop{border:2px dashed #e6eefb;border-radius:10px;padding:14px;text-align:center;color:var(--muted)}
+    .preview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+    .preview{background:#fff;border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:8px;align-items:center}
+    .preview video,.preview img{max-width:170px;height:100px; object-fit:cover; border-radius:8px;background:#000}
+    .meta{width:100%;display:flex;justify-content:space-between;align-items:center;font-size:13px}
+    .small{font-size:12px;color:var(--muted)}
+    .url-wrap{display:flex;gap:8px;width:100%}
+    .url-input{flex:1;padding:8px;border-radius:8px;border:1px solid #edf2ff;font-size:13px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+    .copy-btn{padding:8px 10px;border-radius:8px;border:0;background:#111827;color:#fff;cursor:pointer}
+    progress{width:100%;height:8px;border-radius:8px;overflow:hidden}
+    .info {font-size:12px;color:var(--muted)}
+    .footer-note{font-size:12px;color:var(--muted);margin-top:6px}
+    @media (max-width:520px){ .preview video,.preview img{max-width:130px;height:80px} }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Upload Images & Videos (Firebase Storage + Realtime DB)</h1>
+        <p class="lead">Use camera or gallery — uploads saved public & shown instantly with a copyable URL.</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="u-row" style="align-items:center;justify-content:space-between">
+        <div class="controls">
+          <label for="fileInput" style="display:inline-block">
+            <button id="pickBtn">Choose / Camera</button>
+          </label>
+          <button id="selectMultiple" class="btn-ghost">Select multiple</button>
+          <button id="clearAll" class="btn-ghost">Clear previews</button>
+        </div>
+        <div class="info">Uploads go to <strong>/uploads</strong> in Realtime DB and Storage folder <strong>uploads/</strong></div>
+      </div>
+
+      <form id="uploadForm" style="margin-top:12px">
+        <input id="fileInput" type="file" accept="image/*,video/*" capture="environment" multiple />
+        <div class="drop" id="dropzone">Or drag & drop files here (images & videos)</div>
+        <div style="margin-top:10px">
+          <progress id="globalProgress" value="0" max="100" style="display:none"></progress>
+        </div>
+      </form>
+      <div class="footer-note">Note: make sure your Firebase Storage rules permit read access for anyone to use the generated links publicly.</div>
+    </section>
+
+    <section class="card">
+      <h3 style="margin:0 0 10px 0">Live uploads & previews</h3>
+      <div id="previewGrid" class="preview-grid"></div>
+    </section>
+  </div>
+
+  <!-- Firebase (compat) SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+
+  <script>
+    // ---------- CONFIG ----------
+    // Using the Firebase config you supplied earlier. Change if you want another project.
+    const firebaseConfig = {
+      apiKey: "AIzaSyC3Ef_ZnjmU_X2JJDbUlDYv6enGkuuW2n0",
+      authDomain: "school-6425b.firebaseapp.com",
+      databaseURL: "https://school-6425b-default-rtdb.firebaseio.com",
+      projectId: "school-6425b",
+      storageBucket: "school-6425b.appspot.com",
+      messagingSenderId: "929265479935",
+      appId: "1:929265479935:web:af45ea5968ee50258a1cca"
+    };
+
+    // ---------- INIT ----------
+    firebase.initializeApp(firebaseConfig);
+    const storage = firebase.storage();
+    const db = firebase.database();
+    const uploadsRef = db.ref('uploads'); // Realtime DB path
+
+    // ---------- UI ----------
+    const fileInput = document.getElementById('fileInput');
+    const pickBtn = document.getElementById('pickBtn');
+    const dropzone = document.getElementById('dropzone');
+    const previewGrid = document.getElementById('previewGrid');
+    const globalProgress = document.getElementById('globalProgress');
+    const clearAllBtn = document.getElementById('clearAll');
+    const selectMultipleBtn = document.getElementById('selectMultiple');
+
+    let allowMultiple = true;
+    selectMultipleBtn.addEventListener('click', () => {
+      allowMultiple = !allowMultiple;
+      fileInput.multiple = allowMultiple;
+      selectMultipleBtn.textContent = allowMultiple ? 'Select multiple' : 'Single file';
+    });
+
+    pickBtn.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = '#c7ddff';
+    });
+    dropzone.addEventListener('dragleave', (e) => {
+      dropzone.style.borderColor = '#e6eefb';
+    });
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = '#e6eefb';
+      const files = e.dataTransfer.files;
+      if (files && files.length) handleFiles(files);
+    });
+
+    fileInput.addEventListener('change', (e)=>{
+      handleFiles(e.target.files);
+      fileInput.value = ''; // reset
+    });
+
+    clearAllBtn.addEventListener('click', ()=> previewGrid.innerHTML = '');
+
+    // ---------- Upload handling ----------
+    function handleFiles(fileList) {
+      const files = Array.from(fileList);
+      if (files.length === 0) return;
+      globalProgress.style.display = 'block';
+      let totalBytes = files.reduce((s,f)=>s+f.size,0);
+      let uploadedBytes = 0;
+
+      const uploads = files.map(file => {
+        return uploadFile(file, (bytes) => {
+          // update aggregate progress
+          uploadedBytes += bytes;
+          const pct = Math.min(100, Math.round((uploadedBytes / totalBytes) * 100));
+          globalProgress.value = pct;
+          if (pct >= 100) setTimeout(()=> globalProgress.style.display='none', 700);
+        });
+      });
+
+      // Fire-and-forget: individual uploadFile handles UI and DB writes
+      Promise.allSettled(uploads).then(()=> {
+        // done
+      });
+    }
+
+    function uploadFile(file, progressCallback) {
+      return new Promise((resolve, reject) => {
+        const timestamp = Date.now();
+        const ext = file.name.split('.').pop().toLowerCase();
+        const safeName = file.name.replace(/[^\w.\-]/g, '_');
+        const storagePath = `uploads/${timestamp}_${safeName}`;
+
+        const storageRef = storage.ref().child(storagePath);
+        const uploadTask = storageRef.put(file);
+
+        // create placeholder preview while uploading
+        const placeholderId = 'ph_' + timestamp + '_' + Math.random().toString(36).slice(2,8);
+        const ph = createPlaceholderPreview(placeholderId, file);
+        previewGrid.prepend(ph);
+
+        uploadTask.on('state_changed',
+          (snapshot) => {
+            const bytesTransferred = snapshot.bytesTransferred;
+            const delta = bytesTransferred - (uploadTask._lastBytes || 0);
+            uploadTask._lastBytes = bytesTransferred;
+            if (typeof progressCallback === 'function') progressCallback(delta);
+            // update placeholder progress bar
+            const prog = ph.querySelector('progress');
+            if (prog) {
+              const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+              prog.value = pct;
+            }
+          },
+          (err) => {
+            console.error('Upload failed', err);
+            ph.querySelector('.small').textContent = 'Upload failed';
+            reject(err);
+          },
+          async () => {
+            // success
+            try {
+              const downloadURL = await uploadTask.snapshot.ref.getDownloadURL();
+              const meta = {
+                name: file.name,
+                mime: file.type || (file.type.startsWith('video') ? 'video/*' : 'image/*'),
+                size: file.size,
+                storagePath,
+                url: downloadURL,
+                createdAt: firebase.database.ServerValue.TIMESTAMP
+              };
+              // push to realtime DB
+              const newRef = uploadsRef.push();
+              await newRef.set(meta);
+
+              // replace placeholder content with final preview + url
+              updatePreviewWithURL(placeholderId, meta);
+              resolve(meta);
+            } catch (err) {
+              console.error(err);
+              reject(err);
+            }
+          }
+        );
+      });
+    }
+
+    // ---------- UI helpers ----------
+    function createPlaceholderPreview(id, file) {
+      const wrap = document.createElement('div');
+      wrap.className = 'preview';
+      wrap.id = id;
+
+      const type = file.type || (file.name.match(/\.(mp4|mov|webm|m4v|avi)$/i) ? 'video' : 'image');
+
+      // preview element (image or video)
+      let mediaEl;
+      if (file.type.startsWith('video') || type === 'video') {
+        mediaEl = document.createElement('video');
+        mediaEl.controls = true;
+        mediaEl.muted = true;
+        // show local preview (blob)
+        mediaEl.src = URL.createObjectURL(file);
+      } else {
+        mediaEl = document.createElement('img');
+        mediaEl.alt = file.name;
+        mediaEl.src = URL.createObjectURL(file);
+      }
+      wrap.appendChild(mediaEl);
+
+      // progress bar & info
+      const prog = document.createElement('progress');
+      prog.value = 0;
+      prog.max = 100;
+      wrap.appendChild(prog);
+
+      const metaLine = document.createElement('div');
+      metaLine.className = 'meta';
+      const nameEl = document.createElement('div');
+      nameEl.innerHTML = `<div class="small">${escapeHtml(file.name)}</div>`;
+      const sizeEl = document.createElement('div');
+      sizeEl.className = 'small';
+      sizeEl.textContent = humanFileSize(file.size);
+      metaLine.appendChild(nameEl); metaLine.appendChild(sizeEl);
+      wrap.appendChild(metaLine);
+
+      const status = document.createElement('div');
+      status.className = 'small';
+      status.textContent = 'Uploading...';
+      wrap.appendChild(status);
+
+      return wrap;
+    }
+
+    function updatePreviewWithURL(placeholderId, meta) {
+      const wrap = document.getElementById(placeholderId);
+      if (!wrap) {
+        // fallback: create one
+        const newWrap = document.createElement('div');
+        newWrap.className = 'preview';
+        previewGrid.prepend(newWrap);
+      }
+      const finalWrap = wrap || newWrap;
+      finalWrap.innerHTML = '';
+
+      // media element
+      if (meta.mime && meta.mime.startsWith('video')) {
+        const v = document.createElement('video');
+        v.controls = true;
+        v.src = meta.url;
+        v.width = 300;
+        v.height = 160;
+        finalWrap.appendChild(v);
+      } else {
+        const i = document.createElement('img');
+        i.src = meta.url;
+        i.alt = meta.name;
+        finalWrap.appendChild(i);
+      }
+
+      const metaLine = document.createElement('div');
+      metaLine.className = 'meta';
+      metaLine.innerHTML = `<div class="small">${escapeHtml(meta.name)}</div><div class="small">${humanFileSize(meta.size)}</div>`;
+      finalWrap.appendChild(metaLine);
+
+      const urlWrap = document.createElement('div');
+      urlWrap.className = 'url-wrap';
+      const urlInput = document.createElement('input');
+      urlInput.className = 'url-input';
+      urlInput.readOnly = true;
+      urlInput.value = meta.url;
+      urlWrap.appendChild(urlInput);
+
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'copy-btn';
+      copyBtn.textContent = 'Copy';
+      copyBtn.addEventListener('click', async ()=>{
+        try {
+          await navigator.clipboard.writeText(urlInput.value);
+          copyBtn.textContent = 'Copied!';
+          setTimeout(()=>copyBtn.textContent='Copy',1200);
+        } catch(e){
+          alert('Copy failed. Manually select and copy the link.');
+        }
+      });
+      urlWrap.appendChild(copyBtn);
+      finalWrap.appendChild(urlWrap);
+
+      const dbInfo = document.createElement('div');
+      dbInfo.className = 'small';
+      const when = new Date();
+      dbInfo.textContent = `Uploaded: ${when.toLocaleString()}`;
+      finalWrap.appendChild(dbInfo);
+
+      // link to open in full
+      const openBtn = document.createElement('button');
+      openBtn.style.marginTop = '8px';
+      openBtn.textContent = 'Open file';
+      openBtn.addEventListener('click', ()=> window.open(meta.url, '_blank'));
+      finalWrap.appendChild(openBtn);
+    }
+
+    // ---------- Realtime listener to show remote uploads as they appear ----------
+    // This is what gives you "real time" updates from other clients
+    uploadsRef.limitToLast(200).on('child_added', (snap) => {
+      const data = snap.val();
+      if (!data || !data.url) return;
+      // Check if this url already displayed - avoid duplicates
+      if (document.querySelector(`input[url="${cssEscape(data.url)}"]`)) return;
+      // Create a preview if not present
+      const wrapper = document.createElement('div');
+      wrapper.className = 'preview';
+
+      if (data.mime && data.mime.startsWith('video')) {
+        const v = document.createElement('video');
+        v.controls = true; v.src = data.url;
+        wrapper.appendChild(v);
+      } else {
+        const i = document.createElement('img');
+        i.src = data.url;
+        i.alt = data.name || 'image';
+        wrapper.appendChild(i);
+      }
+
+      const metaLine = document.createElement('div');
+      metaLine.className = 'meta';
+      metaLine.innerHTML = `<div class="small">${escapeHtml(data.name || 'file')}</div><div class="small">${humanFileSize(data.size || 0)}</div>`;
+      wrapper.appendChild(metaLine);
+
+      const urlWrap = document.createElement('div');
+      urlWrap.className = 'url-wrap';
+      const urlInput = document.createElement('input');
+      urlInput.className = 'url-input';
+      urlInput.readOnly = true;
+      urlInput.value = data.url;
+      urlInput.setAttribute('url', data.url);
+      urlWrap.appendChild(urlInput);
+
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'copy-btn';
+      copyBtn.textContent = 'Copy';
+      copyBtn.addEventListener('click', async ()=>{
+        try { await navigator.clipboard.writeText(urlInput.value); copyBtn.textContent='Copied!'; setTimeout(()=>copyBtn.textContent='Copy',1200); }
+        catch(e) { alert('Copy failed.'); }
+      });
+      urlWrap.appendChild(copyBtn);
+      wrapper.appendChild(urlWrap);
+
+      // place newest first
+      previewGrid.prepend(wrapper);
+    });
+
+    // ---------- small helpers ----------
+    function humanFileSize(bytes) {
+      const thresh = 1024;
+      if (Math.abs(bytes) < thresh) return bytes + ' B';
+      const units = ['KB','MB','GB','TB','PB','EB','ZB','YB'];
+      let u = -1;
+      do {
+        bytes /= thresh;
+        ++u;
+      } while(Math.abs(bytes) >= thresh && u < units.length - 1);
+      return bytes.toFixed(1)+' '+units[u];
+    }
+
+    function escapeHtml(s) {
+      if (!s) return '';
+      return s.replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; });
+    }
+
+    // CSS escape helper for selector-safe attribute values (simple)
+    function cssEscape(str){ return String(str).replace(/["'\\]/g,''); }
+
+    // polyfill for older browsers: ensure navigator.clipboard exists
+    if (!navigator.clipboard) {
+      navigator.clipboard = {
+        writeText: (text) => new Promise((res,rej)=>{
+          const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); document.body.removeChild(ta); res(); } catch(e){ document.body.removeChild(ta); rej(e); }
+        })
+      };
+    }
+  </script>
+</body>
+</html>

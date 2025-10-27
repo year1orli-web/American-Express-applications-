@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin | Double King Estate</title>
+  <style>
+    :root{
+      --accent:#d62828;
+      --muted:#6b7280;
+      --bg:#f8fafc;
+      --card-bg:#fff;
+      --shadow:0 6px 16px rgba(15,23,42,0.08);
+      font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto;
+    }
+    body{margin:0;background:var(--bg);color:#0f172a;}
+    .container{max-width:1100px;margin:0 auto;padding:16px}
+    h1{font-size:22px;margin:8px 0}
+    .muted{color:var(--muted)}
+
+    .form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;background:var(--card-bg);padding:16px;border-radius:12px;box-shadow:var(--shadow)}
+    input,select,textarea{width:100%;padding:8px 10px;border-radius:8px;border:1px solid #e2e8f0}
+    button{padding:8px 12px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+    .btn-primary{background:var(--accent);color:white}
+
+    table{width:100%;border-collapse:collapse;margin-top:18px;font-size:14px;background:var(--card-bg);box-shadow:var(--shadow)}
+    th,td{padding:10px;border-bottom:1px solid #f1f5f9;text-align:left}
+    th{background:#f8fafc}
+
+    .actions button{margin-right:6px}
+
+    @media(max-width:600px){
+      table{font-size:12px}
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Admin Dashboard <span class="muted">— Manage Listings</span></h1>
+
+    <form id="propertyForm" class="form">
+      <input name="title" placeholder="Title (e.g. 2 Bedroom Terrace Duplex)" required />
+      <input name="price" placeholder="Price (e.g. 1.5M)" required />
+      <input name="specs" placeholder="Specs (e.g. 250SQM, attached BQ)" />
+      <input name="image" placeholder="Image URL (optional)" />
+      <select name="project">
+        <option value="davi">Davicity Kuje</option>
+        <option value="sun">Sunview City Kuje</option>
+      </select>
+      <select name="type">
+        <option value="house">House</option>
+        <option value="plot">Plot</option>
+      </select>
+      <button type="submit" class="btn-primary">Save / Update</button>
+    </form>
+
+    <table id="listings">
+      <thead>
+        <tr><th>Title</th><th>Price</th><th>Specs</th><th>Project</th><th>Type</th><th>Actions</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyC3Ef_ZnjmU_X2JJDbUlDYv6enGkuuW2n0",
+      authDomain: "school-6425b.firebaseapp.com",
+      databaseURL: "https://school-6425b-default-rtdb.firebaseio.com",
+      projectId: "school-6425b",
+      storageBucket: "school-6425b.firebasestorage.app",
+      messagingSenderId: "929265479935",
+      appId: "1:929265479935:web:af45ea5968ee50258a1cca"
+    };
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const form = document.getElementById('propertyForm');
+    const tableBody = document.querySelector('#listings tbody');
+    let editId = null;
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(form).entries());
+      const ref = editId ? db.ref('properties/' + editId) : db.ref('properties').push();
+      ref.set(data).then(() => {
+        alert('Saved successfully');
+        form.reset();
+        editId = null;
+      });
+    });
+
+    function load(){
+      db.ref('properties').on('value', snap => {
+        const data = snap.val() || {};
+        render(data);
+      });
+    }
+
+    function render(data){
+      tableBody.innerHTML = '';
+      Object.entries(data).forEach(([id, item]) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${item.title||''}</td>
+          <td>${item.price||''}</td>
+          <td>${item.specs||''}</td>
+          <td>${item.project||''}</td>
+          <td>${item.type||''}</td>
+          <td class='actions'>
+            <button onclick="edit('${id}')">Edit</button>
+            <button onclick="del('${id}')">Del</button>
+          </td>`;
+        tableBody.appendChild(tr);
+      });
+    }
+
+    function edit(id){
+      db.ref('properties/'+id).once('value').then(snap => {
+        const v = snap.val();
+        Object.keys(v).forEach(k => {
+          if(form[k]) form[k].value = v[k];
+        });
+        editId = id;
+      });
+    }
+
+    function del(id){
+      if(confirm('Delete this listing?')){
+        db.ref('properties/'+id).remove();
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>
